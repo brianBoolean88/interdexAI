@@ -1,49 +1,288 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
 import os
-from werkzeug.utils import secure_filename
+from flask import Flask, request, jsonify, render_template, send_file
+from flask_cors import CORS
+from dotenv import load_dotenv
+import google.generativeai as genai
+from gtts import gTTS
+import json
+import io
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email
 
+load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+try:
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+    llm_model = genai.GenerativeModel('gemini-2.5-flash')
+except Exception as e:
+    print(f"Gemini error: {e}")
 
-@app.route('/api/data', methods=['GET'])
-def get_data():
-    return jsonify({"message": "Hello from Flask!"})
+verified_invite_sender_email = "interdexai@gmail.com"
+verified_report_sender_email = "interdexai@gmail.com"
 
+interviews = {}
+results = {}
+current_interview_id = 10000000
 
-@app.route('/api/upload', methods=['POST'])
-def upload_audio():
-    if 'file' not in request.files:
-        return jsonify({'error': 'no file part'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'no selected file'}), 400
-    uploads_dir = os.path.join(os.path.dirname(__file__), 'uploads')
-    os.makedirs(uploads_dir, exist_ok=True)
-    filename = secure_filename(file.filename)
-    save_path = os.path.join(uploads_dir, filename)
-    file.save(save_path)
+#Employer
+@app.route('/')
+def employer_page():
+    """Serves the main page for employers to create an interview."""
+    return render_template('employer.html')
 
-    print("recieved upload for question:", request.form.get('questionText'))
-    question_text = request.form.get('questionText')
-    #the file with the audio is : variable file
-
-    return jsonify({
-        'filename': filename,
-        'saved_path': save_path,
-        'size_bytes': os.path.getsize(save_path),
-        'message': 'file saved; implement transcription/LLM integration as needed'
-    })
-
-@app.route('/api/finalize', methods=['GET'])
-def api_finalize():
-    #do some final backend rating here
-    return jsonify({
-        'final_score': 85,
-        'comments': 'Great job overall! A few areas for improvement.'
-    })
+@app.route('/create-interview', methods = ['POST'])
+def create_interview():
+    """Receives questions, traits, and emails, then sends invite."""
+    global current_interview_id
+    data = request.json
     
+    questions = data.get('questions')
+    traits = data.get('traits')
+    employer_email = data.get('employer_email')
+    applicant_emails = data.get('applicant_emails')
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    if not all([questions, traits, employer_email, applicant_emails]):
+        return jsonify({"error": "Missing data"}), 400
+    if not isinstance(applicant_emails, list):
+        return jsonify({"error": "applicant_emails should be a list"}), 400
+
+    interview_id = str(current_interview_id)
+    current_interview_id += 1
+
+    interviews[interview_id] = {"questions": questions, "traits": traits, "employer_email": employer_email}
+    results[interview_id] = []
+    interview_link = f"{request.host_url}interview/{interview_id}"
+    report_link = f"{request.host_url}report/{interview_id}"
+
+    sg = SendGridAPIClient(SENDGRID_API_KEY)
+    for applicant_email in applicant_emails:
+        try:
+            message = Mail(
+                from_email = verified_invite_sender_email, 
+                to_emails = applicant_email,
+                subject = "You're Invited to an AI Interview!",
+                html_content=f"""
+                    <h3>Hello,</h3>
+                    <p>You have been invited to complete an automated AI interview.</p>
+                    <p>Please click the link below to begin:</p>
+                    <a href="{interview_link}" style="padding: 12px 22px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                        Start Your Interview
+                    </a>
+                    <p>Good luck!</p>
+                """,
+            )
+            message.reply_to = Email(employer_email)
+    
+            response = sg.send(message)
+            print(f"Email sent, status code: {response.status_code}")
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            pass
+
+    print(f"New interview created, ID: {interview_id}")
+    return jsonify({"interview_link": interview_link,"report_link": report_link})
+
+def send_report_email(interview_id):
+    interview_data = interviews.get(interview_id)
+    report_data = results.get(interview_id)
+    recipient_email = interview_data.get("employer_email") if interview_data else None
+
+    if not recipient_email or not report_data:
+        print(f"Cannot send report for {interview_id}, missing recipient")
+        return
+    
+    total_rating = 0
+    count = 0
+    if report_data:
+        for res in report_data:
+            try: 
+                total_rating += int(res['evaluation']['rating'])
+                count += 1
+            except Exception as e:
+                pass
+    average = round(total_rating / count if count > 0 else 0, 1)
+
+    html_body = f"<h2>Interview Report -- ID: {interview_id}</h2>"
+    html_body += f"<p><strong>Overall Average Rating: {average}/10</strong></p><hr>"
+    html_body += "<table border='1' cellpadding='10' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
+    html_body += "<thead><tr><th>Question</th><th>Answer</th><th>Rating</th><th>Feedback</th></tr></thead><tbody>"
+    for item in report_data:
+        q = item.get("question", "N/A")
+        a = item.get("answer", "N/A")
+        rating = item.get("evaluation", {}).get("rating", "N/A")
+        feedback = item.get("evaluation", {}).get("feedback", "N/A")
+        html_body += f"<tr><td>{q}</td><td>{a}</td><td>{rating}/10</td><td>{feedback}</td></tr>"
+    html_body += "</tbody></table>"
+
+    try:
+        message = Mail(
+            from_email = verified_report_sender_email,
+            to_emails = recipient_email,
+            subject = f"Interview Report - ID: {interview_id}",
+            html_content = html_body
+        )
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        print(f"Report sent to {recipient_email}")
+    except Exception as e:
+        print(f"Error sending email for {interview_id} to {recipient_email}: {e}")
+
+#Applicant page
+@app.route('/interview/<interview_id>')
+def interview_page(interview_id):
+    """Serves the page for the applicant to take the interview."""
+    if interview_id not in interviews:
+        return "Interview not found", 404
+    return render_template('interview.html', interview_id = interview_id)
+
+@app.route('/get-questions/<interview_id>')
+def get_questions(interview_id):
+    """Provides the list of questions for the applicant's page."""
+    interview_data = interviews.get(interview_id)
+    if not interview_data:
+        return jsonify({"error": "Interview not found"}), 404
+    return jsonify({"questions": interview_data.get("questions", [])})
+
+#AI Part
+@app.route('/text-to-speech', methods = ['POST'])
+def text_to_speech():
+    data = request.json
+    text_to_speak = data.get('text')
+    if not text_to_speak:
+        return jsonify({"error": "No text provided"}), 400
+    
+    try:
+        audio_fp = io.BytesIO()
+        tts = gTTS(text = text_to_speak, lang = "en")
+        tts.write_to_fp(audio_fp)
+        audio_fp.seek(0)
+        
+        print(f"Generated text audio for : {text_to_speak}")
+        return send_file(audio_fp, mimetype = "audio/mpeg")
+    except Exception as e:
+        print(f"Error in gTTS: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/api/upload', methods = ['POST'])
+def upload_audio_and_evaluate():
+    if 'file' not in request.files:
+        return jsonify({"error": "no file part"}), 400
+    
+    file = request.files['file']
+    question = request.form.get('questionText')
+    interview_id = request.form.get('interviewId')
+
+    if not all([file, question, interview_id]):
+        return jsonify({"error": "Missing file, question text, or interview ID"})
+    if file.filename == "":
+        return jsonify({"error": "no selected file"})
+    
+    audio_path = "temp_user_audio.webm"
+    file.save(audio_path)
+
+    try:
+        audio_gemini = genai.upload_file(path = audio_path)
+        prompt = "Transcribe this audio. Only return the text of the transcription"
+        response = llm_model.generate_content([prompt, audio_gemini])
+        
+        genai.delete_file(audio_gemini.name)
+        os.remove(audio_path)
+
+        answer = response.text.strip()
+        print(f"Transcribed audio to : {answer}")
+
+    except Exception as e:
+        print(f"Error in transcription: {e}")
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        return jsonify({"error": str(e)}), 500
+    
+    if not answer:
+        answer = "No answer spoken"
+
+    try:
+        interview_data = interviews.get(interview_id)
+        if not interview_data:
+            return jsonify({"error": "Interview data not found"}), 404
+        
+        traits_list = interview_data.get("traits", [])
+        traits_string = ", ".join(traits_list)
+        question_list = interview_data.get("questions", [])
+
+        prompt = f"""
+        You are a hiring manager looking for these specific traits: {traits_string}.
+        
+        Evaluate the candidate's answer based *only* on the question and how well it demonstrates those traits.
+        
+        Provide a rating from 1-10 and a brief justification in the feedback.
+        The feedback should *specifically mention* how the answer did or did not reflect the desired traits.
+
+        Return only a valid JSON object in this exact schema:
+        {{
+            "rating": 8,
+            "feedback": "This answer showed good Creativity by..."
+        }}
+
+        ---
+        Question: "{question}"
+        Candidate's answer: "{answer}"
+        ---
+        """
+
+        response = llm_model.generate_content(prompt)
+        json_text = response.text.replace("```json", "").replace("```", "").strip()
+        evaluation_json = json.loads(json_text)
+
+        results[interview_id].append({"question": question, "answer": answer, "evaluation": evaluation_json})
+        print(f"Evaluated Rating: {evaluation_json.get('rating')}/10")
+
+        is_last_question = False
+        try:
+            current_question_index = question_list.index(question)
+            if current_question_index == len(question_list) - 1:
+                is_last_question = True
+        except ValueError:
+            if len(results.get(interview_id, [])) == len(question_list):
+                is_last_question = True
+                print(f"Triggering report for {interview_id}: all questions answered.")
+        
+        if is_last_question:
+            send_report_email(interview_id)
+        return jsonify(evaluation_json)
+    
+    except Exception as e:
+        print(f"Error in evaluation: {e}")
+        return jsonify({"error": "Error evaluating answer"}), 500
+    
+#Report
+@app.route('/report/<interview_id>')
+def report_page(interview_id):
+    if interview_id not in results:
+        return "Report not found", 404
+    return render_template('report.html', interview_id = interview_id)
+
+@app.route('/get-report-data/<interview_id>', methods = ['GET'])
+def get_report_data(interview_id):
+    if interview_id not in results:
+        return jsonify({"error": "Report not found"}), 404
+    
+    all_results = results[interview_id]
+    total_rating = 0
+    count = 0
+    if all_results:
+        for res in all_results:
+            try:
+                total_rating += int(res['evaluation']['rating'])
+                count += 1
+            except Exception:
+                pass
+    average = total_rating / count if count > 0 else 0
+    return jsonify({"results": all_results, "average_rating": round(average, 1)})
+
+#Main
+if __name__ == "__main__":
+    app.run(debug = True, port = 5000)
