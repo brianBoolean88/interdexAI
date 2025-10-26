@@ -6,11 +6,40 @@ html {
     font-family: "Poppins", sans-serif;
 }
 
-.focus-gap {
-    gap: 5px;
-    transition: all 0.2s; 
+.arrow.flipped {
+    transform: scaleX(-1);
+    translate: -10px 0;
 }
 
-.focus-gap:hover {
-    gap: 10px;
+.arrow {
+    translate: 95px 0;
+    transition: translate 0.1s;
 }
+
+.focus-gap:hover > .arrow {
+    translate: 100px 0;
+}
+
+.focus-gap:hover > .arrow.flipped {
+    translate: -15px 0;
+}
+
+.custom-ol {
+    counter-reset: num;
+    list-style: none;
+    padding: 0;
+  }
+  
+  .custom-ol li {
+    counter-increment: num;
+    display: flex;
+    align-items: flex-start;
+    padding: 5px;
+  }
+  
+  .custom-ol li::before {
+    content: counter(num) ".";
+    margin-right: 1rem;
+    margin-top: 7px;
+    font-weight: bold;
+  }
