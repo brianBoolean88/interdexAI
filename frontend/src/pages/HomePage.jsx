@@ -85,11 +85,15 @@ export default function HomePage() {
 
   return (
     <div>
-      <div className="absolute px-10 h-15 outline flex justify-center items-center w-screen outline-gray-500">
-        <h1 className="absolute h-15 flex justify-center items-center top-0 right-10 text-lg font-black">
+      <div className="absolute px-10 h-15 outline flex justify-center items-center w-screen outline-gray-500 header">
+        <h1 className="absolute h-15 flex justify-center items-center top-0 right-10 text-lg font-black title">
           interdex.ai
         </h1>
-        {step > 0 ? <h1 className="text-lg text-gray-500">{email}</h1> : null}
+        {step > 0 ? (
+          <h1 className="text-lg text-gray-800 bg-white px-3 py-2 rounded-2xl">
+            {email}
+          </h1>
+        ) : null}
       </div>
       <div className="h-screen pt-40 flex flex-col items-center relative">
         <div className="pt-1">{page}</div>
@@ -102,13 +106,13 @@ export default function HomePage() {
             >
               Back
               <div className="absolute top-0 h-10 flex items-center arrow flipped">
-                <Arrow className="size-4" />
+                <Arrow className="size-4 arrow-svg" />
               </div>
             </button>
           </div>
         ) : null}
 
-        <div className={step > 0 ? "absolute bottom-15" : "mt-15"}>
+        <div className="absolute bottom-15">
           {step < 3 ? (
             <button
               className="cursor-pointer text-2xl relative h-10 w-30 mb-5 text-grey-500 focus-gap"
@@ -116,12 +120,12 @@ export default function HomePage() {
             >
               Next
               <div className="absolute top-0 h-10 flex items-center arrow right">
-                <Arrow className="size-5" />
+                <Arrow className="size-5 arrow-svg" />
               </div>
             </button>
           ) : (
             <button
-              className="cursor-pointer px-10 py-5 text-white text-2xl bg-gray-900 rounded-3xl"
+              className="cursor-pointer px-10 py-5 text-white text-2xl bg-gray-900 rounded-3xl send-btn"
               onClick={send}
             >
               Send

@@ -5,6 +5,37 @@
 html {
     font-family: "Poppins", sans-serif;
     background-color: #F2F0EF;
+    /* background-color: #E0EAFC; */
+   
+}
+
+
+.header {
+    background-image: linear-gradient(to right, #E0EAFC, #CFDEF3)
+}
+
+.underline-rounded {
+    position: relative;
+}
+
+.underline-rounded::after {
+content: "";
+position: absolute;
+left: 50%;
+translate: -50% 0;
+bottom: -0.3em;          /* adjust underline offset */
+width: 80%;
+height: 5px;             /* underline thickness */
+background: #6395EE;
+border-radius: 3px;      /* <-- makes ends rounded */
+}
+
+.send-btn {
+    transition: scale 0.1s;
+}
+
+.send-btn:hover {
+    scale: 1.05
 }
 
 .arrow.flipped {
@@ -17,8 +48,16 @@ html {
     transition: translate 0.1s;
 }
 
+.focus-gap:hover {
+    font-weight: 500;
+}
+
 .focus-gap:hover > .arrow {
     translate: 100px 0;
+}
+
+.focus-gap:hover > .arrow > .arrow-svg {
+    stroke-width: 3px;
 }
 
 .focus-gap:hover > .arrow.flipped {

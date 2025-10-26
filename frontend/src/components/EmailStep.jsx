@@ -7,7 +7,7 @@ export default function EmailPage({
 }) {
   return (
     <div>
-      <h1 className="text-6xl mt-20 mb-10">Create an Interview</h1>
+      <h1 className="text-6xl mt-15 mb-20">Create an Interview</h1>
       <div className="flex flex-col gap-2 items-center">
         <div className="text-lg">Your Email</div>
         <input
