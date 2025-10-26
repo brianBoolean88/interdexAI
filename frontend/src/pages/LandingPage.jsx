@@ -5,7 +5,7 @@ export default function LandingPage() {
     <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-gray-100">
       <div className="text-center p-8 bg-gray-800 shadow-2xl rounded-xl max-w-lg mx-auto">
         <img
-          src="interdex-logo.png"
+          src="/interdex-logo.png"
           alt="Interdex.ai Logo"
           className="h-24 mx-auto mb-6"
         />
