@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import EmailPage from "../components/EmailStep";
 import QuestionsPage from "../components/QuestionsStep";
 import RecipientsPage from "../components/RecipientsStep";
@@ -26,8 +27,23 @@ export default function HomePage() {
   }
 
   async function send() {
-    // send using backend api call
+    // create a session id and navigate to session page with form data
+    // use crypto.randomUUID when available, otherwise fallback
+    const id = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    navigate(`/session/${id}`, {
+      state: {
+        email,
+        questions,
+        traits,
+        recipients,
+      },
+    });
   }
+
+  const navigate = useNavigate();
 
   var page = null;
 
