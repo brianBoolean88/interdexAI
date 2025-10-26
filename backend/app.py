@@ -1,13 +1,17 @@
 import os
-from flask import Flask, request, jsonify, render_template, send_file
+from flask import Flask, request, jsonify, render_template, send_file, Response
 from flask_cors import CORS
+import queue
+import threading
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
 import google.generativeai as genai
 from gtts import gTTS
 import json
 import io
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email
+import time
 
 load_dotenv()
 app = Flask(__name__)
@@ -27,6 +31,9 @@ verified_report_sender_email = "interdexai@gmail.com"
 interviews = {}
 results = {}
 current_interview_id = 10000000
+
+UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 #Employer
 @app.route('/')
@@ -131,9 +138,6 @@ def send_report_email(interview_id):
     except Exception as e:
         print(f"Error sending email for {interview_id} to {recipient_email}: {e}")
 
-#Applicant page
-@app.route('/interview/<interview_id>')
-def interview_page(interview_id):
     """Serves the page for the applicant to take the interview."""
     if interview_id not in interviews:
         return "Interview not found", 404
@@ -147,8 +151,37 @@ def get_questions(interview_id):
         return jsonify({"error": "Interview not found"}), 404
     return jsonify({"questions": interview_data.get("questions", [])})
 
+# Status updates handling
+status_updates = {}
+
+def send_status_update(interview_id, status):
+    """Send a status update for a specific interview"""
+    if interview_id in status_updates:
+        status_updates[interview_id].put(status)
+
+@app.route('/api/status/<interview_id>')
+def status(interview_id):
+    """SSE endpoint for status updates"""
+    def generate():
+        q = queue.Queue()
+        status_updates[interview_id] = q
+        try:
+            while True:
+                # Get status update from queue
+                try:
+                    status = q.get(timeout=30)  # 30 second timeout
+                    yield f"data: {status}\n\n"
+                except queue.Empty:
+                    yield f"data: ping\n\n"  # Keep connection alive
+        finally:
+            # Cleanup when client disconnects
+            if interview_id in status_updates:
+                del status_updates[interview_id]
+    
+    return Response(generate(), mimetype='text/event-stream')
+
 #AI Part
-@app.route('/text-to-speech', methods = ['POST'])
+@app.route('/api/text-to-speech', methods = ['POST'])
 def text_to_speech():
     data = request.json
     text_to_speak = data.get('text')
@@ -162,56 +195,137 @@ def text_to_speech():
         audio_fp.seek(0)
         
         print(f"Generated text audio for : {text_to_speak}")
-        return send_file(audio_fp, mimetype = "audio/mpeg")
+        response = send_file(
+            audio_fp, 
+            mimetype = "audio/mpeg",
+            as_attachment = False,
+            download_name = "question.mp3"
+        )
+        response.headers['Accept-Ranges'] = 'bytes'
+        return response
     except Exception as e:
         print(f"Error in gTTS: {e}")
         return jsonify({"error": str(e)}), 500
     
 @app.route('/api/upload', methods = ['POST'])
 def upload_audio_and_evaluate():
-    if 'file' not in request.files:
+
+    file = request.files.get('file')
+    if not file:
         return jsonify({"error": "no file part"}), 400
-    
-    file = request.files['file']
     question = request.form.get('questionText')
     interview_id = request.form.get('interviewId')
 
-    if not all([file, question, interview_id]):
-        return jsonify({"error": "Missing file, question text, or interview ID"})
-    if file.filename == "":
-        return jsonify({"error": "no selected file"})
-    
-    audio_path = "temp_user_audio.webm"
-    file.save(audio_path)
+    # Use absolute paths throughout to avoid confusion
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    uploads_dir = os.path.join(base_dir, 'uploads')
+    os.makedirs(uploads_dir, exist_ok=True)
 
+    # Get filename and ensure it's secure
+    original_name = file.filename or ''
+    safe_name = secure_filename(original_name) if original_name else None
+    if not safe_name:
+        ts = time.strftime('%Y%m%d-%H%M%S')
+        safe_name = f'recording-{ts}.webm'
+
+    # Use absolute path for saving
+    save_path = os.path.join(uploads_dir, safe_name)
+    print(f"Attempting to save file to: {save_path}")
+    
     try:
-        audio_gemini = genai.upload_file(path = audio_path)
-        prompt = "Transcribe this audio. Only return the text of the transcription"
+        file.save(save_path)
+    except Exception as e:
+        print(f"Failed to save uploaded file to {save_path}: {e}")
+        return jsonify({"error": f"failed to save file: {str(e)}"}), 500
+    
+    if not os.path.exists(save_path) or os.path.getsize(save_path) < 1000:
+        return jsonify({"error": "Uploaded audio file is empty or corrupted"}), 400
+    try:
+        send_status_update(interview_id, json.dumps({
+            "status": "Uploading to Gemini AI",
+            "step": 1,
+            "total_steps": 4
+        }))
+        print(f"Uploading file to Gemini: {save_path}")
+        # Upload file to Gemini and wait for it to be ACTIVE before using
+        audio_gemini = genai.upload_file(path=save_path, mime_type="audio/webm")
+        print("File uploaded to Gemini successfully")
+        
+        send_status_update(interview_id, json.dumps({
+            "status": "Processing audio file",
+            "step": 2,
+            "total_steps": 4
+        }))
+        
+        for attempt in range(10):  # retry up to 10 times
+            time.sleep(2)
+            audio_gemini = genai.get_file(audio_gemini.name)
+            send_status_update(interview_id, json.dumps({
+                "status": f"Processing audio file (attempt {attempt + 1}/10)",
+                "step": 2,
+                "total_steps": 4
+            }))
+            if audio_gemini.state.name == "ACTIVE":
+                print("✅ Gemini file ACTIVE")
+                break
+            elif audio_gemini.state.name == "FAILED":
+                raise ValueError("Gemini upload failed: file processing failed.")
+        else:
+            raise TimeoutError("Gemini file did not become ACTIVE in time.")
+
+        prompt = """Please transcribe the audio file. 
+        Instructions:
+        1. Listen to the audio carefully
+        2. Transcribe all spoken words
+        3. Return only the transcription text
+        4. If no speech is detected, return 'No speech detected'"""
+        
+        # Pass the uploaded file reference to the model
+        send_status_update(interview_id, json.dumps({
+            "status": "Converting speech to text",
+            "step": 3,
+            "total_steps": 4
+        }))
+        print("Sending transcription request to Gemini...")
         response = llm_model.generate_content([prompt, audio_gemini])
         
-        genai.delete_file(audio_gemini.name)
-        os.remove(audio_path)
-
-        answer = response.text.strip()
+        # Handle the response more carefully
+        if not response.candidates or not response.candidates[0].content:
+            raise ValueError("No valid response from transcription model")
+            
+        answer = response.candidates[0].content.parts[0].text.strip()
+        if not answer:
+            answer = "No speech detected"
+            
+        print(f"Transcription complete: {len(answer)} characters")
+        
+        # Cleanup files
+        try:
+            genai.delete_file(audio_gemini.name)
+            print("Cleaned up Gemini file")
+        except Exception as e:
+            print(f"Warning: Failed to delete Gemini file: {e}")
+            
+        if os.path.exists(save_path):
+            os.remove(save_path)
+            print("Cleaned up local file")
         print(f"Transcribed audio to : {answer}")
 
     except Exception as e:
         print(f"Error in transcription: {e}")
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
+        if os.path.exists(save_path):
+            os.remove(save_path)
         return jsonify({"error": str(e)}), 500
     
     if not answer:
         answer = "No answer spoken"
 
+    print("hi")
+
     try:
-        interview_data = interviews.get(interview_id)
-        if not interview_data:
-            return jsonify({"error": "Interview data not found"}), 404
-        
-        traits_list = interview_data.get("traits", [])
+        traits_list = request.form.get("traits", [])
         traits_string = ", ".join(traits_list)
-        question_list = interview_data.get("questions", [])
+        question_list = request.form.get("questions", [])
 
         prompt = f"""
         You are a hiring manager looking for these specific traits: {traits_string}.
@@ -233,24 +347,45 @@ def upload_audio_and_evaluate():
         ---
         """
 
+        print("Sending evaluation request to Gemini...")
         response = llm_model.generate_content(prompt)
-        json_text = response.text.replace("```json", "").replace("```", "").strip()
-        evaluation_json = json.loads(json_text)
+        
+        if not response.candidates or not response.candidates[0].content:
+            raise ValueError("No valid response from evaluation model")
 
-        results[interview_id].append({"question": question, "answer": answer, "evaluation": evaluation_json})
+        print(response)
+            
+        json_text = response.candidates[0].content.parts[0].text.replace("```json", "").replace("```", "").strip()
+        print(json_text)
+        try:
+            evaluation_json = json.loads(json_text)
+            print(evaluation_json)
+            if not isinstance(evaluation_json, dict) or 'rating' not in evaluation_json or 'feedback' not in evaluation_json:
+                raise ValueError("Invalid evaluation format")
+        except json.JSONDecodeError as e:
+            print("can't parse")
+            raise ValueError(f"Failed to parse evaluation response: {e}")
+        print("hi")
+        results[interview_id] = {"question": question, "answer": answer, "evaluation": evaluation_json}
+        
+        print("hi")
         print(f"Evaluated Rating: {evaluation_json.get('rating')}/10")
 
         is_last_question = False
         try:
+            print("hi")
             current_question_index = question_list.index(question)
             if current_question_index == len(question_list) - 1:
                 is_last_question = True
         except ValueError:
+            print("hi")
             if len(results.get(interview_id, [])) == len(question_list):
                 is_last_question = True
                 print(f"Triggering report for {interview_id}: all questions answered.")
         
+        print("hi")
         if is_last_question:
+            print("hi")
             send_report_email(interview_id)
         return jsonify(evaluation_json)
     

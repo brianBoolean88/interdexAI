@@ -5,6 +5,8 @@ import QuestionsPage from "../components/QuestionsStep";
 import RecipientsPage from "../components/RecipientsStep";
 import TraitsPage from "../components/TraitsStep";
 import Arrow from "../icons/arrow.svg?react";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../components/Firebase";
 
 export default function HomePage() {
   const [questions, setQuestions] = useState([""]);
@@ -28,6 +30,18 @@ export default function HomePage() {
     setStep(step + 1);
   }
 
+  async function saveSessionData(id, data) {
+    const ref = doc(db, "sessions", id);
+    console.log("Saving session data to Firestore with ID:", id);
+
+    await setDoc(ref, {
+      ...data,
+      createdAt: serverTimestamp(),
+    });
+    console.log("Session data saved with ID:", id);
+    console.log(data);
+  }
+
   async function send() {
     // create a session id and navigate to session page with form data
     // use crypto.randomUUID when available, otherwise fallback
@@ -36,12 +50,17 @@ export default function HomePage() {
         ? crypto.randomUUID()
         : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-    navigate(`/session/${id}`, {
+    // Save session data to Firestore
+    await saveSessionData(id, {
+      email,
+      questions,
+      traits,
+      recipients,
+    });
+
+    navigate(`/created`, {
       state: {
-        email,
-        questions,
-        traits,
-        recipients,
+        id,
       },
     });
   }
@@ -49,7 +68,6 @@ export default function HomePage() {
   const navigate = useNavigate();
 
   var page = null;
-
   switch (step) {
     case 0:
       page = (
@@ -95,8 +113,12 @@ export default function HomePage() {
           </h1>
         ) : null}
       </div>
-      <div className="h-screen pt-40 flex flex-col items-center relative">
-        <div className="pt-1">{page}</div>
+      <div className="h-screen py-40 flex flex-col items-center justify-between">
+        {step == 0 ? (
+          <h1 className="text-6xl mb-10">Create an Interview</h1>
+        ) : null}
+
+        {page}
 
         {step > 0 ? (
           <div className="absolute left-20">
@@ -115,7 +137,7 @@ export default function HomePage() {
         <div className="absolute bottom-15">
           {step < 3 ? (
             <button
-              className="cursor-pointer text-2xl relative h-10 w-30 mb-5 text-grey-500 focus-gap"
+              className="cursor-pointer text-grey-500 text-2xl focus-gap relative h-10 w-30 mb-5"
               onClick={nextStep}
             >
               Next
