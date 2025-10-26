@@ -13,25 +13,28 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [step, setStep] = useState(0);
 
-  // function start(email) {
-  //   setEmail(email);
-  //   setStep(1);
-  // }
+  const [canContinue, setCanContinue] = useState(false);
+  const [error, setError] = useState(false);
 
   function back() {
     setStep(step - 1);
   }
 
   function nextStep() {
+    if (!canContinue) {
+      setError(true);
+      return;
+    }
     setStep(step + 1);
   }
 
   async function send() {
     // create a session id and navigate to session page with form data
     // use crypto.randomUUID when available, otherwise fallback
-    const id = typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
     navigate(`/session/${id}`, {
       state: {
@@ -49,7 +52,15 @@ export default function HomePage() {
 
   switch (step) {
     case 0:
-      page = <EmailPage email={email} setEmail={setEmail}></EmailPage>;
+      page = (
+        <EmailPage
+          email={email}
+          setEmail={setEmail}
+          error={error}
+          setError={setError}
+          setCanContinue={setCanContinue}
+        ></EmailPage>
+      );
       break;
     case 1:
       page = (
@@ -74,7 +85,7 @@ export default function HomePage() {
 
   return (
     <div>
-      <div className="absolute px-10 h-15 outline flex justify-center items-center w-screen outline-gray-500 bg-pur">
+      <div className="absolute px-10 h-15 outline flex justify-center items-center w-screen outline-gray-500">
         <h1 className="absolute h-15 flex justify-center items-center top-0 right-10 text-lg font-black">
           interdex.ai
         </h1>
@@ -100,7 +111,7 @@ export default function HomePage() {
         <div className={step > 0 ? "absolute bottom-15" : "mt-15"}>
           {step < 3 ? (
             <button
-              className="cursor-pointer text-grey-500 text-2xl focus-gap relative h-10 w-30 mb-5"
+              className="cursor-pointer text-2xl relative h-10 w-30 mb-5 text-grey-500 focus-gap"
               onClick={nextStep}
             >
               Next
@@ -111,9 +122,7 @@ export default function HomePage() {
           ) : (
             <button
               className="cursor-pointer px-10 py-5 text-white text-2xl bg-gray-900 rounded-3xl"
-              onClick={async () => {
-                await send();
-              }}
+              onClick={send}
             >
               Send
             </button>
