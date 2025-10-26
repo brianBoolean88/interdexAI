@@ -8,6 +8,8 @@ import json
 import io
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email
+import time
+from google.generativeai.errors import APIError
 
 load_dotenv()
 app = Flask(__name__)
@@ -183,24 +185,46 @@ def upload_audio_and_evaluate():
     
     audio_path = "temp_user_audio.webm"
     file.save(audio_path)
+    audio_gemini = None
 
     try:
         audio_gemini = genai.upload_file(path = audio_path)
+        print(f"Uploading file {audio_gemini.name}")
+        timeout = 30
+        start_time = time.time()
+
+        while audio_gemini.state.name != 'ACTIVE':
+            if time.time() - start_time > timeout:
+                raise TimeoutError("File processing took too long and timed out")
+            time.sleep(1)
+
+            audio_gemini = genai.get_file(name=audio_gemini.name)
+            if audio_gemini.state.name == 'FAILED':
+                raise APIError("File processing failed on the server.")
+        print(f"File is now active ({audio_gemini.state.name}). Proceeding to transcription.")
+
         prompt = "Transcribe this audio. Only return the text of the transcription"
         response = llm_model.generate_content([prompt, audio_gemini])
-        
-        genai.delete_file(audio_gemini.name)
-        os.remove(audio_path)
-
         answer = response.text.strip()
         print(f"Transcribed audio to : {answer}")
 
     except Exception as e:
         print(f"Error in transcription: {e}")
+        if audio_gemini:
+            genai.delete_file(audio_gemini.name)
         if os.path.exists(audio_path):
             os.remove(audio_path)
         return jsonify({"error": str(e)}), 500
-    
+    finally:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
+    try:
+        if audio_gemini:
+            genai.delete_file(audio_gemini.name)
+    except Exception as e:
+        print(f"Failed to delete uploaded Gemini file: {e}")        
+
     if not answer:
         answer = "No answer spoken"
 
