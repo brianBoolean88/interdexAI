@@ -8,7 +8,8 @@ import CreatedPage from "./pages/Created";
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/create" element={<HomePage />} />
       <Route path="/created" element={<CreatedPage />} />
       <Route path="/session/:id" element={<SessionPage />} />
       <Route path="/results/:id" element={<ResultsPage />} />

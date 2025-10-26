@@ -114,10 +114,6 @@ export default function HomePage() {
         ) : null}
       </div>
       <div className="h-screen py-40 flex flex-col items-center justify-between">
-        {step == 0 ? (
-          <h1 className="text-6xl mb-10">Create an Interview</h1>
-        ) : null}
-
         {page}
 
         {step > 0 ? (
