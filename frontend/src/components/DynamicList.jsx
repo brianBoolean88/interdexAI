@@ -2,6 +2,7 @@ export default function DynamicList({
   list,
   setList,
   placeholder,
+  type = "text",
   multiline = false,
 }) {
   return (
@@ -29,7 +30,7 @@ export default function DynamicList({
               ></textarea>
             ) : (
               <input
-                type="text"
+                type={type}
                 value={item}
                 onChange={(e) => {
                   let newList = [...list];
@@ -43,7 +44,8 @@ export default function DynamicList({
                   setList(newList);
                 }}
                 placeholder={placeholder}
-                className="p-2 outline-1 outline-dashed outline-gray-400 rounded-lg"
+                pattern="^[^\s@]+@[^\s@]+\.[^\s@]+$"
+                className="p-2 outline-1 outline-gray-400 outline-dashed rounded-lg w-100"
               ></input>
             )}
           </li>

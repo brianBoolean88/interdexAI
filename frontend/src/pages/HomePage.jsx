@@ -15,11 +15,18 @@ export default function HomePage() {
   const [email, setEmail] = useState("");
   const [step, setStep] = useState(0);
 
+  const [canContinue, setCanContinue] = useState(false);
+  const [error, setError] = useState(false);
+
   function back() {
     setStep(step - 1);
   }
 
   function nextStep() {
+    if (!canContinue) {
+      setError(true);
+      return;
+    }
     setStep(step + 1);
   }
 
@@ -41,21 +48,8 @@ export default function HomePage() {
     const id = typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    // Initialize Firebase
-    await saveSessionData(id, {
-      email,
-      questions,
-      traits,
-      recipients,
-    })
 
-    navigate(`/created`, {
-      state: {
-        id,
-      }
-    })
-
-    /*navigate(`/session/${id}`, {
+    navigate(`/session/${id}`, {
       state: {
         email,
         questions,
@@ -70,7 +64,15 @@ export default function HomePage() {
   var page = null;
   switch (step) {
     case 0:
-      page = <EmailPage email={email} setEmail={setEmail}></EmailPage>;
+      page = (
+        <EmailPage
+          email={email}
+          setEmail={setEmail}
+          error={error}
+          setError={setError}
+          setCanContinue={setCanContinue}
+        ></EmailPage>
+      );
       break;
     case 1:
       page = (
@@ -118,24 +120,28 @@ export default function HomePage() {
           </button>
         ) : null}
 
-        {step < 3 ? (
-          <button
-            className="px-10 py-5 text-grey-500 text-2xl cursor-pointer flex items-center focus-gap"
-            onClick={nextStep}
-          >
-            Next
-            <Arrow />
-          </button>
-        ) : (
-          <button
-            className="px-10 py-5 text-white text-2xl cursor-pointer bg-indigo-600 rounded-3xl"
-            onClick={async () => {
-              await send();
-            }}
-          >
-            Send
-          </button>
-        )}
+        <div className={step > 0 ? "absolute bottom-15" : "mt-15"}>
+          {step < 3 ? (
+            <button
+              className="cursor-pointer text-grey-500 text-2xl focus-gap relative h-10 w-30 mb-5"
+              onClick={nextStep}
+            >
+              Next
+              <div className="absolute top-0 h-10 flex items-center arrow right">
+                <Arrow className="size-5" />
+              </div>
+            </button>
+          ) : (
+            <button
+              className="cursor-pointer px-10 py-5 text-white text-2xl bg-gray-900 rounded-3xl"
+              onClick={async () => {
+                await send();
+              }}
+            >
+              Send
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
