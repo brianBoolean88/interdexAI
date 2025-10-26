@@ -216,42 +216,105 @@ def upload_audio_and_evaluate():
     question = request.form.get('questionText')
     interview_id = request.form.get('interviewId')
 
-    if not all([file, question, interview_id]):
-        return jsonify({"error": "Missing file, question text, or interview ID"})
-    if file.filename == "":
-        return jsonify({"error": "no selected file"})
+    # Use absolute paths throughout to avoid confusion
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    uploads_dir = os.path.join(base_dir, 'uploads')
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    # Get filename and ensure it's secure
+    original_name = file.filename or ''
+    safe_name = secure_filename(original_name) if original_name else None
+    if not safe_name:
+        ts = time.strftime('%Y%m%d-%H%M%S')
+        safe_name = f'recording-{ts}.webm'
+
+    # Use absolute path for saving
+    save_path = os.path.join(uploads_dir, safe_name)
+    print(f"Attempting to save file to: {save_path}")
     
-    audio_path = "temp_user_audio.webm"
-    file.save(audio_path)
-    audio_gemini = None
-
     try:
-        audio_gemini = genai.upload_file(path = audio_path)
-        print(f"Uploading file {audio_gemini.name}")
-        timeout = 30
-        start_time = time.time()
+        file.save(save_path)
+    except Exception as e:
+        print(f"Failed to save uploaded file to {save_path}: {e}")
+        return jsonify({"error": f"failed to save file: {str(e)}"}), 500
+    
+    if not os.path.exists(save_path) or os.path.getsize(save_path) < 1000:
+        return jsonify({"error": "Uploaded audio file is empty or corrupted"}), 400
+    try:
+        send_status_update(interview_id, json.dumps({
+            "status": "Uploading to Gemini AI",
+            "step": 1,
+            "total_steps": 4
+        }))
+        print(f"Uploading file to Gemini: {save_path}")
+        # Upload file to Gemini and wait for it to be ACTIVE before using
+        audio_gemini = genai.upload_file(path=save_path, mime_type="audio/webm")
+        print("File uploaded to Gemini successfully")
+        
+        send_status_update(interview_id, json.dumps({
+            "status": "Processing audio file",
+            "step": 2,
+            "total_steps": 4
+        }))
+        
+        for attempt in range(10):  # retry up to 10 times
+            time.sleep(2)
+            audio_gemini = genai.get_file(audio_gemini.name)
+            send_status_update(interview_id, json.dumps({
+                "status": f"Processing audio file (attempt {attempt + 1}/10)",
+                "step": 2,
+                "total_steps": 4
+            }))
+            if audio_gemini.state.name == "ACTIVE":
+                print("✅ Gemini file ACTIVE")
+                break
+            elif audio_gemini.state.name == "FAILED":
+                raise ValueError("Gemini upload failed: file processing failed.")
+        else:
+            raise TimeoutError("Gemini file did not become ACTIVE in time.")
 
-        while audio_gemini.state.name != 'ACTIVE':
-            if time.time() - start_time > timeout:
-                raise TimeoutError("File processing took too long and timed out")
-            time.sleep(1)
-
-            audio_gemini = genai.get_file(name=audio_gemini.name)
-            if audio_gemini.state.name == 'FAILED':
-                raise APIError("File processing failed on the server.")
-        print(f"File is now active ({audio_gemini.state.name}). Proceeding to transcription.")
-
-        prompt = "Transcribe this audio. Only return the text of the transcription"
+        prompt = """Please transcribe the audio file. 
+        Instructions:
+        1. Listen to the audio carefully
+        2. Transcribe all spoken words
+        3. Return only the transcription text
+        4. If no speech is detected, return 'No speech detected'"""
+        
+        # Pass the uploaded file reference to the model
+        send_status_update(interview_id, json.dumps({
+            "status": "Converting speech to text",
+            "step": 3,
+            "total_steps": 4
+        }))
+        print("Sending transcription request to Gemini...")
         response = llm_model.generate_content([prompt, audio_gemini])
-        answer = response.text.strip()
+        
+        # Handle the response more carefully
+        if not response.candidates or not response.candidates[0].content:
+            raise ValueError("No valid response from transcription model")
+            
+        answer = response.candidates[0].content.parts[0].text.strip()
+        if not answer:
+            answer = "No speech detected"
+            
+        print(f"Transcription complete: {len(answer)} characters")
+        
+        # Cleanup files
+        try:
+            genai.delete_file(audio_gemini.name)
+            print("Cleaned up Gemini file")
+        except Exception as e:
+            print(f"Warning: Failed to delete Gemini file: {e}")
+            
+        if os.path.exists(save_path):
+            os.remove(save_path)
+            print("Cleaned up local file")
         print(f"Transcribed audio to : {answer}")
 
     except Exception as e:
         print(f"Error in transcription: {e}")
-        if audio_gemini:
-            genai.delete_file(audio_gemini.name)
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
+        if os.path.exists(save_path):
+            os.remove(save_path)
         return jsonify({"error": str(e)}), 500
     
     if not answer:

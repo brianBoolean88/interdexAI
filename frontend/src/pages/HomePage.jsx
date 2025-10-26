@@ -49,14 +49,19 @@ export default function HomePage() {
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-    navigate(`/session/${id}`, {
+    // Save session data to Firestore
+    await saveSessionData(id, {
+      email,
+      questions,
+      traits,
+      recipients,
+    })
+
+    navigate(`/created`, {
       state: {
-        email,
-        questions,
-        traits,
-        recipients, 
-      },
-    });*/
+        id,
+      }
+    })
   }
 
   const navigate = useNavigate();
