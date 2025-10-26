@@ -169,7 +169,7 @@ export default function HomePage() {
         )}
 
         {step > 0 ? (
-          <div className="absolute left-20 bottom-20">
+          <div className="absolute left-20">
             <button
               className="cursor-pointer text-grey-500 text-md focus-gap relative h-10 w-20"
               onClick={back}
